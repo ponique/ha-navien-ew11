@@ -54,6 +54,7 @@ class NavienController:
     def _parse(self, pkt):
         dev_id = pkt[1]
         cmd = pkt[3]
+        
         try:
             data_len = pkt[4]
             if len(pkt) < 5 + data_len + 2: return
@@ -66,23 +67,35 @@ class NavienController:
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat
+        # 2. Thermostat (0x36) - ★ [복구됨] 짝지어 읽기 (Interleaved)
         elif dev_id == 0x36 and cmd == 0x81:
-            if len(data) >= 14:
+            if len(data) >= 5:
                 pwr_mask = data[1]
                 away_mask = data[2]
+                
                 temp_data = data[5:]
+                # 1개 방당 2바이트(Set, Cur) 사용
                 room_count = len(temp_data) // 2
                 
-                cur_temps = temp_data[:room_count]
-                set_temps = temp_data[room_count:]
-                
                 for i in range(room_count):
-                    if i >= len(cur_temps) or i >= len(set_temps): break
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
-                    c_temp = self._parse_temp(cur_temps[i])
-                    s_temp = self._parse_temp(set_temps[i])
+                    
+                    # ★ [핵심] 사용자님 댁은 [값1][값2]가 한 방의 데이터임
+                    # 아까 잘 되던 순서: (앞: 설정?, 뒤: 현재?)
+                    # 사용자 피드백: "Heating 3 - 설정24(18)인데 21(15)로 뜸" -> 앞을 읽어서 뒤로 매핑함.
+                    # 즉, 들어오는 순서는 [Set, Cur] or [Cur, Set] 인데
+                    # 일단 아까 "잘 맞다"고 하셨던 로직(짝지어 읽기)으로 복구합니다.
+                    # (보통 앞이 설정, 뒤가 현재인 경우가 많음. 반대면 Swap만 하면 됨)
+                    
+                    # Case A: temp_data[i*2] = Set, temp_data[i*2+1] = Cur
+                    s_temp = self._parse_temp(temp_data[i*2])
+                    c_temp = self._parse_temp(temp_data[i*2+1])
+                    
+                    # 만약 반대라면 아래 주석 해제하세요
+                    # c_temp = self._parse_temp(temp_data[i*2])
+                    # s_temp = self._parse_temp(temp_data[i*2+1])
+                    
                     if c_temp == 0 and s_temp == 0: continue
 
                     state = {
@@ -93,31 +106,27 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - ★ [완벽 수정] Power 우선권 보장
+        # 3. Fan (0x32) - [유지] 전열교환기 개선 로직
         elif dev_id == 0x32 and cmd == 0x81:
-            # Log: 05 00 [Pwr] [Mode] [Speed]
             if len(data) >= 3:
                 pwr_byte = data[1]
                 mode_byte = data[2]
+                speed_byte = data[3] if len(data) > 3 else 0
                 
                 is_on = (pwr_byte != 0x00)
-                
                 pct = 0
-                preset = None  # 꺼지면 None
+                preset = "low"
                 
                 if is_on:
-                    # 켜져 있을 때만 모드 해석
-                    if mode_byte == 0x02: # Auto
+                    if mode_byte == 0x02 or speed_byte == 0x04: 
                         preset = "auto"
                         pct = 50 
-                    elif mode_byte == 0x03: # High
+                    elif mode_byte == 0x03: 
                         preset = "high"
                         pct = 100
-                    else: # 0x01 (Low/Mid)
-                        preset = "low"
+                    else: 
+                        preset = "low" 
                         pct = 33
-                        # 참고: Mid 상태는 HA에서 66%로 명령을 보내야 진입됨.
-                        # 상태값은 Low와 같게 보일 수 있으나 제어는 됨.
                 
                 state = {
                     "state": is_on, 
@@ -188,7 +197,6 @@ class NavienController:
                 elif pct > 33: val = 0x02
                 payload = [0x01, val]
             else:
-                # Power ON/OFF
                 cmd = 0x41
                 val = 0x01 if action == "on" else 0x00
                 payload = [0x01, val]
