@@ -47,10 +47,8 @@ class NavienController:
         return True
 
     def _parse_temp(self, raw_val):
-        # 0.5도 단위 파싱 (0x80 비트 체크)
         temp = float(raw_val & 0x7F)
-        if raw_val & 0x80:
-            temp += 0.5
+        if raw_val & 0x80: temp += 0.5
         return temp
 
     def _parse(self, pkt):
@@ -69,27 +67,17 @@ class NavienController:
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36) - ★ [완벽 수정] 데이터 구조: [Set][Cur] 반복
+        # 2. Thermostat (0x36)
         elif dev_id == 0x36 and cmd == 0x81:
-            # Log: 0D 00 01 0E 00 00 [Set1][Cur1] [Set2][Cur2] ...
             if len(data) >= 5:
                 pwr_mask = data[1]
                 away_mask = data[2]
-                
-                # 온도 데이터 시작 (인덱스 5부터)
                 temp_data = data[5:]
-                
-                # 방 1개당 2바이트(Set, Cur) 사용하므로 / 2
                 room_count = len(temp_data) // 2
                 
                 for i in range(room_count):
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
-                    
-                    # ★ [수정됨] 짝지어 읽기
-                    # 짝수 인덱스: 설정온도 (Set)
-                    # 홀수 인덱스: 현재온도 (Cur)
-                    # 로그 분석 결과: 18(24도, Set) 17(23도, Cur) 순서임
                     s_temp = self._parse_temp(temp_data[i*2])
                     c_temp = self._parse_temp(temp_data[i*2+1])
                     
@@ -103,25 +91,26 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32)
+        # 3. Fan (0x32) - ★ [수정됨] 프리셋-% 동기화 강화
         elif dev_id == 0x32 and cmd == 0x81:
             if len(data) >= 3:
                 is_on = data[1] != 0x00
-                mode = data[2]
+                mode = data[2] # 01:Low, 02:Med, 03:High
                 
                 pct = 0
                 preset = "low"
                 
                 if is_on:
-                    if mode == 0x01: 
-                        pct = 33
-                        preset = "low"
+                    # 켜져있다면 무조건 값이 있어야 함 (0% 방지)
+                    if mode == 0x03: 
+                        pct = 100
+                        preset = "high"
                     elif mode == 0x02: 
                         pct = 66
                         preset = "medium"
-                    elif mode == 0x03: 
-                        pct = 100
-                        preset = "high"
+                    else: # 0x01 or unknown
+                        pct = 33
+                        preset = "low"
                 
                 state = {
                     "state": is_on, 
@@ -151,7 +140,6 @@ class NavienController:
             DeviceType.GASVALVE: Platform.SWITCH,
             DeviceType.ELEVATOR: Platform.SWITCH
         }.get(dtype)
-        
         if plat:
             self.gateway.update_device(DeviceState(key, plat, state))
 
@@ -177,8 +165,7 @@ class NavienController:
                 target = float(kwargs['temp'])
                 int_part = int(target)
                 val = int_part
-                if (target - int_part) >= 0.5:
-                    val |= 0x80
+                if (target - int_part) >= 0.5: val |= 0x80
                 payload = [0x01, val]
             elif action == "away":
                 cmd = 0x45
@@ -189,9 +176,10 @@ class NavienController:
             if action == "set_speed":
                 cmd = 0x42
                 pct = kwargs['pct']
-                val = 0x01
-                if pct > 66: val = 0x03
-                elif pct > 33: val = 0x02
+                # ★ 퍼센트를 단계로 변환 (스냅핑)
+                val = 0x01 # 기본 Low
+                if pct > 67: val = 0x03  # High
+                elif pct > 34: val = 0x02 # Medium
                 payload = [0x01, val]
             else:
                 cmd = 0x41
