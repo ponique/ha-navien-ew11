@@ -46,6 +46,16 @@ class NavienController:
         if (add & 0xFF) != pkt[-1]: return False
         return True
 
+    # ★ [추가됨] 0.5도 단위 파싱 함수
+    def _parse_temp(self, raw_val):
+        # 0x80(128) 비트가 있으면 0.5도 추가
+        # 예: 0x17(23) -> 23.0
+        # 예: 0x97(151) -> 23 + 0.5 = 23.5
+        temp = float(raw_val & 0x7F)
+        if raw_val & 0x80:
+            temp += 0.5
+        return temp
+
     def _parse(self, pkt):
         dev_id = pkt[1]
         cmd = pkt[3]
@@ -56,28 +66,35 @@ class NavienController:
             data = pkt[5:5+data_len]
         except IndexError: return
 
-        # 1. Light (0E)
+        # 1. Light (0x0E)
         if dev_id == 0x0E and cmd == 0x81:
             if len(data) >= 2: 
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36)
+        # 2. Thermostat (0x36) - ★ 0.5도 로직 적용
         elif dev_id == 0x36 and cmd == 0x81:
             if len(data) >= 5:
                 pwr_mask = data[1]
                 away_mask = data[2]
+                
                 temp_data = data[5:]
                 room_count = len(temp_data) // 2
                 
-                cur_temps = temp_data[:room_count]
-                set_temps = temp_data[room_count:]
+                # [설정온도] -> [현재온도] 순서 (지난번 확인된 내용)
+                set_temps = temp_data[:room_count]
+                cur_temps = temp_data[room_count:]
                 
                 for i in range(room_count):
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
-                    c_temp = int(cur_temps[i])
-                    s_temp = int(set_temps[i])
+                    
+                    if i >= len(cur_temps) or i >= len(set_temps): break
+                    
+                    # ★ [수정] 단순 int 변환 대신 _parse_temp 사용
+                    c_temp = self._parse_temp(cur_temps[i])
+                    s_temp = self._parse_temp(set_temps[i])
+                    
                     if c_temp == 0 and s_temp == 0: continue
 
                     state = {
@@ -88,15 +105,14 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - [수정됨] 프리셋 모드 추가
+        # 3. Fan (0x32)
         elif dev_id == 0x32 and cmd == 0x81:
-            # Log: 05 00 [Pwr] [Mode] [Speed]
             if len(data) >= 3:
                 is_on = data[1] != 0x00
-                mode = data[2] # 01:Low, 02:Auto(Mid), 03:High
+                mode = data[2]
                 
                 pct = 0
-                preset = "low" # 기본값
+                preset = "low"
                 
                 if is_on:
                     if mode == 0x01: 
@@ -104,7 +120,7 @@ class NavienController:
                         preset = "low"
                     elif mode == 0x02: 
                         pct = 66
-                        preset = "medium" # 2단계
+                        preset = "medium"
                     elif mode == 0x03: 
                         pct = 100
                         preset = "high"
@@ -137,7 +153,6 @@ class NavienController:
             DeviceType.GASVALVE: Platform.SWITCH,
             DeviceType.ELEVATOR: Platform.SWITCH
         }.get(dtype)
-        
         if plat:
             self.gateway.update_device(DeviceState(key, plat, state))
 
@@ -159,8 +174,16 @@ class NavienController:
                 val = 0x01 if kwargs['mode'] == HVACMode.HEAT else 0x00
                 payload = [0x01, val]
             elif action == "temp":
+                # ★ [수정] 온도 설정 시에도 0.5도 단위 반영
+                # 예: 23.5 -> 23 | 128 = 151 (0x97)
                 cmd = 0x44
-                payload = [0x01, int(kwargs['temp'])]
+                target = float(kwargs['temp'])
+                int_part = int(target)
+                val = int_part
+                # 소수점이 0.5 이상이면 128(0x80) 더하기
+                if (target - int_part) >= 0.5:
+                    val |= 0x80
+                payload = [0x01, val]
             elif action == "away":
                 cmd = 0x45
                 val = 0x01 if kwargs['mode'] == "away" else 0x00
@@ -170,9 +193,9 @@ class NavienController:
             if action == "set_speed":
                 cmd = 0x42
                 pct = kwargs['pct']
-                val = 0x01 # Low
-                if pct > 66: val = 0x03 # High
-                elif pct > 33: val = 0x02 # Mid
+                val = 0x01
+                if pct > 66: val = 0x03
+                elif pct > 33: val = 0x02
                 payload = [0x01, val]
             else:
                 cmd = 0x41
