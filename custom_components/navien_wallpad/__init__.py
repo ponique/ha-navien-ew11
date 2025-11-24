@@ -12,6 +12,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    gateway = hass.data[DOMAIN].pop(entry.entry_id)
-    await gateway.stop()
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    # [수정됨] 플랫폼 언로드 먼저 시도
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    
+    # 성공 시 리소스 정리 및 데이터 삭제
+    if unload_ok:
+        gateway = hass.data[DOMAIN].pop(entry.entry_id)
+        await gateway.stop()
+        
+    return unload_ok
