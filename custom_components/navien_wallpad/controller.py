@@ -67,7 +67,7 @@ class NavienController:
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36) - [유지] 난방 로직 안전
+        # 2. Thermostat (0x36) - ★ [완벽 복구: 짝지어 읽기]
         elif dev_id == 0x36 and cmd == 0x81:
             if len(data) >= 5:
                 pwr_mask = data[1]
@@ -76,17 +76,13 @@ class NavienController:
                 temp_data = data[5:]
                 room_count = len(temp_data) // 2
                 
-                cur_temps = temp_data[:room_count]
-                set_temps = temp_data[room_count:]
-                
                 for i in range(room_count):
-                    if i >= len(cur_temps) or i >= len(set_temps): break
-                    
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
                     
-                    c_temp = self._parse_temp(cur_temps[i])
-                    s_temp = self._parse_temp(set_temps[i])
+                    # [복구] 짝수 인덱스: 설정온도, 홀수 인덱스: 현재온도 (Interleaved)
+                    s_temp = self._parse_temp(temp_data[i*2])
+                    c_temp = self._parse_temp(temp_data[i*2+1])
                     
                     if c_temp == 0 and s_temp == 0: continue
 
@@ -98,33 +94,28 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - [유지] 꺼짐 상태 확실히 반영
+        # 3. Fan (0x32) - [유지]
         elif dev_id == 0x32 and cmd == 0x81:
             if len(data) >= 3:
                 pwr_byte = data[1]
                 mode_byte = data[2]
                 
                 is_on = (pwr_byte != 0x00)
-                
                 pct = 0
                 preset = None 
                 
                 if is_on:
-                    if mode_byte == 0x02: 
+                    if mode_byte == 0x02 or speed_byte == 0x04: 
                         preset = "auto"
                         pct = 50 
-                    elif mode_byte == 0x03:
+                    elif mode_byte == 0x03: 
                         preset = "high"
                         pct = 100
                     else: 
                         preset = "low" 
                         pct = 33
                 
-                state = {
-                    "state": is_on, 
-                    "percentage": pct,
-                    "preset_mode": preset
-                }
+                state = {"state": is_on, "percentage": pct, "preset_mode": preset}
                 self._update(DeviceType.VENTILATION, 1, state)
 
         # 4. Gas (0x12)
