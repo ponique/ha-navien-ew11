@@ -67,12 +67,10 @@ class NavienController:
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36) - ★ [수정됨] 길이 조건 완화
+        # 2. Thermostat (0x36) - ★ [긴급 원복] 사용자 맞춤 설정 복구
         elif dev_id == 0x36 and cmd == 0x81:
-            # Log: 0D 00 01 0E 00 00 [Cur...] [Set...]
-            # Header 5 bytes + (RoomCount * 2) bytes
-            
-            # ★ [핵심 수정] 14가 아니라 5 이상이면 처리 (방 개수 자동 계산)
+            # ★ [원복 1] 길이 조건 완화 (14 -> 5)
+            # 사용자 로그: 0D(13byte) -> Header 제외 8byte 남음
             if len(data) >= 5:
                 pwr_mask = data[1]
                 away_mask = data[2]
@@ -80,7 +78,7 @@ class NavienController:
                 temp_data = data[5:]
                 room_count = len(temp_data) // 2
                 
-                # 앞쪽이 현재온도, 뒤쪽이 설정온도
+                # ★ [원복 2] 앞쪽이 현재온도, 뒤쪽이 설정온도
                 cur_temps = temp_data[:room_count]
                 set_temps = temp_data[room_count:]
                 
@@ -103,13 +101,15 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - 전열교환기 로직 유지
+        # 3. Fan (0x32) - 전열교환기 (수정된 로직 유지)
         elif dev_id == 0x32 and cmd == 0x81:
             if len(data) >= 3:
                 pwr_byte = data[1]
                 mode_byte = data[2]
                 
+                # Power OFF 우선
                 is_on = (pwr_byte != 0x00)
+                
                 pct = 0
                 preset = "low"
                 
@@ -120,7 +120,7 @@ class NavienController:
                     elif mode_byte == 0x03: # High
                         preset = "high"
                         pct = 100
-                    else: # Low/Mid
+                    else: # Low
                         preset = "low" 
                         pct = 33
                 
