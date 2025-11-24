@@ -67,15 +67,16 @@ class NavienController:
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36)
+        # 2. Thermostat (0x36) - ★ [유지] 검증된 로직 (절대 수정 안 함)
         elif dev_id == 0x36 and cmd == 0x81:
             if len(data) >= 5:
                 pwr_mask = data[1]
                 away_mask = data[2]
+                
                 temp_data = data[5:]
                 room_count = len(temp_data) // 2
                 
-                # [현재][설정] 순서
+                # [유지] 앞쪽: 현재온도 / 뒤쪽: 설정온도
                 cur_temps = temp_data[:room_count]
                 set_temps = temp_data[room_count:]
                 
@@ -98,30 +99,29 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - ★ [완벽 수정] OFF시 데이터 초기화
+        # 3. Fan (0x32) - ★ [수정] 꺼짐 상태 확실히 반영
         elif dev_id == 0x32 and cmd == 0x81:
             if len(data) >= 3:
                 pwr_byte = data[1]
                 mode_byte = data[2]
+                speed_byte = data[3] if len(data) > 3 else 0
                 
-                # 1. Power Check
+                # 전원 확인
                 is_on = (pwr_byte != 0x00)
                 
-                # 기본값: 꺼짐 상태
                 pct = 0
-                preset = None # 꺼지면 None이어야 함 (HA UI 반영용)
+                preset = None # 기본값: None (꺼짐)
                 
                 if is_on:
-                    # 켜져 있을 때만 모드 분석
-                    # Mode 02: Auto, 03: High, 01: Low/Mid
-                    if mode_byte == 0x02:
+                    # 켜져 있을 때만 모드 판별
+                    if mode_byte == 0x02: # Auto
                         preset = "auto"
-                        pct = 50
-                    elif mode_byte == 0x03:
+                        pct = 50 
+                    elif mode_byte == 0x03: # High
                         preset = "high"
                         pct = 100
-                    else:
-                        preset = "low"
+                    else: # 0x01 (Low/Mid)
+                        preset = "low" 
                         pct = 33
                 
                 state = {
@@ -191,10 +191,11 @@ class NavienController:
                 val = 0x01
                 if pct > 66: val = 0x03
                 elif pct > 33: val = 0x02
-                elif pct == 50: val = 0x04 # Auto Cmd
+                elif pct == 50: val = 0x04 # Auto
                 payload = [0x01, val]
             else:
                 cmd = 0x41
+                # ON=Auto(01), OFF=00
                 val = 0x01 if action == "on" else 0x00
                 payload = [0x01, val]
 
