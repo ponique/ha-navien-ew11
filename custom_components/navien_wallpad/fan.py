@@ -18,7 +18,16 @@ async def async_setup_entry(hass, entry, async_add_entities):
     )
 
 class NavienFan(FanEntity):
-    _attr_supported_features = FanEntityFeature.SET_SPEED | FanEntityFeature.TURN_ON | FanEntityFeature.TURN_OFF
+    # 속도 조절 + 켜기/끄기 + 프리셋(단계) 모드 지원
+    _attr_supported_features = (
+        FanEntityFeature.SET_SPEED 
+        | FanEntityFeature.TURN_ON 
+        | FanEntityFeature.TURN_OFF 
+        | FanEntityFeature.PRESET_MODE
+    )
+    
+    # 1단계(Low), 2단계(Medium), 3단계(High) 정의
+    _attr_preset_modes = ["low", "medium", "high"]
 
     def __init__(self, gateway, device, entry_id):
         self.gateway = gateway
@@ -40,14 +49,28 @@ class NavienFan(FanEntity):
         self._device = state
         self._attr_is_on = state.state["state"]
         self._attr_percentage = state.state["percentage"]
+        self._attr_preset_mode = state.state["preset_mode"] # 현재 프리셋 상태 반영
         self.async_write_ha_state()
 
-    async def async_turn_on(self, percentage=None, **kwargs):
-        if percentage: await self.async_set_percentage(percentage)
-        else: await self.gateway.send(self._device.key, "on")
+    async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
+        if preset_mode:
+            await self.async_set_preset_mode(preset_mode)
+        elif percentage: 
+            await self.async_set_percentage(percentage)
+        else: 
+            await self.gateway.send(self._device.key, "on")
 
     async def async_turn_off(self, **kwargs):
         await self.gateway.send(self._device.key, "off")
 
     async def async_set_percentage(self, percentage):
+        # 슬라이더 조작 시
         await self.gateway.send(self._device.key, "set_speed", pct=percentage)
+
+    async def async_set_preset_mode(self, preset_mode):
+        # 버튼(약/중/강) 조작 시 -> 해당 퍼센트로 변환해서 전송
+        pct = 33
+        if preset_mode == "medium": pct = 66
+        elif preset_mode == "high": pct = 100
+        
+        await self.gateway.send(self._device.key, "set_speed", pct=pct)
