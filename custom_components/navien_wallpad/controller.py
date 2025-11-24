@@ -23,10 +23,7 @@ class NavienController:
 
             if len(self._rx_buf) < 7: break
 
-            pkt_len = 0
             valid = False
-            
-            # 체크섬이 맞는 패킷 찾기
             for l in range(7, min(len(self._rx_buf)+1, 60)):
                 candidate = self._rx_buf[:l]
                 if self._check_integrity(candidate):
@@ -40,17 +37,13 @@ class NavienController:
                 else: break
 
     def _check_integrity(self, pkt):
-        # Checksum: XOR, ADD
         if len(pkt) < 7: return False
         xor = 0
         add = 0
-        
         for b in pkt[:-2]: xor ^= b
         if xor != pkt[-2]: return False
-        
         for b in pkt[:-1]: add += b
         if (add & 0xFF) != pkt[-1]: return False
-        
         return True
 
     def _parse(self, pkt):
@@ -58,95 +51,79 @@ class NavienController:
         cmd = pkt[3]
         
         try:
-            # pkt[4]는 데이터 길이(Len)
             data_len = pkt[4]
-            # 실제 데이터는 인덱스 5부터 시작
             if len(pkt) < 5 + data_len + 2: return
             data = pkt[5:5+data_len]
         except IndexError: return
 
-        # ==========================================
-        # 1. Light (0x0E) - 조명 (수정됨)
-        # ==========================================
+        # 1. Light (0E)
         if dev_id == 0x0E and cmd == 0x81:
-            # Log: F7 0E ... 04 [00] [01] [01] [01] ...
-            # Len: 04
-            # Data: 00(Dummy) 01(L1) 01(L2) 01(L3)
-            
-            # data[0]은 00이므로 무시하고, data[1]부터 읽어야 함
             if len(data) >= 2: 
                 for i, val in enumerate(data[1:]):
-                    # i=0 -> data[1] -> Light 1
-                    # i=1 -> data[2] -> Light 2
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # ==========================================
-        # 2. Thermostat (0x36) - 난방 (확인됨)
-        # ==========================================
+        # 2. Thermostat (0x36)
         elif dev_id == 0x36 and cmd == 0x81:
-            # Log: 0D [00] [01] [0E] ...
-            # Data: 00(Dummy) 01(Power) 0E(Away) ...
-            if len(data) >= 10: 
-                try:
-                    pwr_mask = data[1] # Index 1 is Power
-                    away_mask = data[2] # Index 2 is Away
-                    cur_temps = data[5:10] # Index 5~9 is Current Temp
-                    set_temps = data[10:]  # Index 10~ is Target Temp
-                    
-                    for i in range(5):
-                        if i >= len(cur_temps): break
-                        
-                        is_on = bool(pwr_mask & (1 << i))
-                        is_away = bool(away_mask & (1 << i))
-                        c_temp = int(cur_temps[i])
-                        s_temp = int(set_temps[i]) if i < len(set_temps) else 0
-                        
-                        if c_temp == 0 and s_temp == 0: continue
+            if len(data) >= 5:
+                pwr_mask = data[1]
+                away_mask = data[2]
+                temp_data = data[5:]
+                room_count = len(temp_data) // 2
+                
+                cur_temps = temp_data[:room_count]
+                set_temps = temp_data[room_count:]
+                
+                for i in range(room_count):
+                    is_on = bool(pwr_mask & (1 << i))
+                    is_away = bool(away_mask & (1 << i))
+                    c_temp = int(cur_temps[i])
+                    s_temp = int(set_temps[i])
+                    if c_temp == 0 and s_temp == 0: continue
 
-                        state = {
-                            "hvac_mode": HVACMode.HEAT if is_on else HVACMode.OFF,
-                            "preset_mode": "away" if is_away else "none",
-                            "current_temp": c_temp,
-                            "target_temp": s_temp
-                        }
-                        self._update(DeviceType.THERMOSTAT, i+1, state)
-                except IndexError: pass
+                    state = {
+                        "hvac_mode": HVACMode.HEAT if is_on else HVACMode.OFF,
+                        "preset_mode": "away" if is_away else "none",
+                        "current_temp": c_temp,
+                        "target_temp": s_temp
+                    }
+                    self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # ==========================================
-        # 3. Fan (0x32) - 환기
-        # ==========================================
+        # 3. Fan (0x32) - [수정됨] 프리셋 모드 추가
         elif dev_id == 0x32 and cmd == 0x81:
-            # Log: 05 [00] [01] [03] (Pwr, Mode, Speed ? - 추정)
-            # 사용자 로그: F7 32 ... 81 05 00 00 00 04 (OFF)
-            # 사용자 로그: F7 32 ... 81 05 00 01 02 04 (ON, Auto)
-            # Data[0]=00, Data[1]=Power, Data[2]=Mode
+            # Log: 05 00 [Pwr] [Mode] [Speed]
             if len(data) >= 3:
                 is_on = data[1] != 0x00
-                mode = data[2]
+                mode = data[2] # 01:Low, 02:Auto(Mid), 03:High
                 
                 pct = 0
-                if is_on:
-                    if mode == 0x01: pct = 33
-                    elif mode == 0x02: pct = 66
-                    elif mode == 0x03: pct = 100
+                preset = "low" # 기본값
                 
-                state = {"state": is_on, "percentage": pct}
+                if is_on:
+                    if mode == 0x01: 
+                        pct = 33
+                        preset = "low"
+                    elif mode == 0x02: 
+                        pct = 66
+                        preset = "medium" # 2단계
+                    elif mode == 0x03: 
+                        pct = 100
+                        preset = "high"
+                
+                state = {
+                    "state": is_on, 
+                    "percentage": pct,
+                    "preset_mode": preset
+                }
                 self._update(DeviceType.VENTILATION, 1, state)
 
-        # ==========================================
-        # 4. Gas (0x12) - 가스
-        # ==========================================
+        # 4. Gas (0x12)
         elif dev_id == 0x12 and cmd == 0x81:
-            # Log: 02 [00] [State]
             if len(data) >= 2:
-                is_closed = (data[1] == 0x04) 
+                is_closed = (data[1] == 0x04)
                 self._update(DeviceType.GASVALVE, 1, is_closed)
 
-        # ==========================================
-        # 5. Elevator (0x33) - 엘리베이터
-        # ==========================================
+        # 5. Elevator (0x33)
         elif dev_id == 0x33 and cmd == 0x81:
-            # Log: 03 [00] [State]
             if len(data) >= 2:
                 is_active = (data[1] == 0x44)
                 self._update(DeviceType.ELEVATOR, 1, is_active)
@@ -193,9 +170,9 @@ class NavienController:
             if action == "set_speed":
                 cmd = 0x42
                 pct = kwargs['pct']
-                val = 0x01
-                if pct > 66: val = 0x03
-                elif pct > 33: val = 0x02
+                val = 0x01 # Low
+                if pct > 66: val = 0x03 # High
+                elif pct > 33: val = 0x02 # Mid
                 payload = [0x01, val]
             else:
                 cmd = 0x41
@@ -216,5 +193,4 @@ class NavienController:
         add = 0
         for b in base: add += b
         add += xor 
-        
         return bytes(base + [xor, add & 0xFF])
