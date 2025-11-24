@@ -67,7 +67,7 @@ class NavienController:
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36) - ★ [최종] 순서 교체 (Current, Set)
+        # 2. Thermostat (0x36) - ★ [FINAL FIX: Assignment Swap]
         elif dev_id == 0x36 and cmd == 0x81:
             if len(data) >= 5:
                 pwr_mask = data[1]
@@ -79,21 +79,22 @@ class NavienController:
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
                     
-                    # [FINAL FIX] 짝수 인덱스: 현재온도 (Cur), 홀수 인덱스: 설정온도 (Set)
-                    c_temp = self._parse_temp(temp_data[i*2])
-                    s_temp = self._parse_temp(temp_data[i*2+1])
+                    # Packet Data: temp_data[i*2] = Set, temp_data[i*2+1] = Current
+                    set_val = self._parse_temp(temp_data[i*2])
+                    cur_val = self._parse_temp(temp_data[i*2+1])
                     
-                    if c_temp == 0 and s_temp == 0: continue
+                    if cur_val == 0 and set_val == 0: continue
 
                     state = {
                         "hvac_mode": HVACMode.HEAT if is_on else HVACMode.OFF,
                         "preset_mode": "away" if is_away else "none",
-                        "current_temp": c_temp,
-                        "target_temp": s_temp
+                        "current_temp": cur_val,  # [FIXED] HA Current shows Actual Current
+                        "target_temp": set_val   # [FIXED] HA Target shows Actual Set
                     }
+
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - [유지]
+        # 3. Fan (0x32)
         elif dev_id == 0x32 and cmd == 0x81:
             if len(data) >= 3:
                 pwr_byte = data[1]
