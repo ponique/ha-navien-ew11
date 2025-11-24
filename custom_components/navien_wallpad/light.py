@@ -1,14 +1,22 @@
+from __future__ import annotations
+from homeassistant.core import callback
 from homeassistant.components.light import LightEntity, ColorMode
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.const import Platform
 from .const import DOMAIN
 
 async def async_setup_entry(hass, entry, async_add_entities):
     gateway = hass.data[DOMAIN][entry.entry_id]
     
-    @async_dispatcher_connect(hass, f"{DOMAIN}_new_device")
+    @callback
     def add_light(dev):
-        if dev.platform == "light":
+        if dev.platform == Platform.LIGHT:
             async_add_entities([NavienLight(gateway, dev, entry.entry_id)])
+
+    # [수정됨] 데코레이터(@)를 제거하고 직접 호출
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, f"{DOMAIN}_new_device", add_light)
+    )
 
 class NavienLight(LightEntity):
     _attr_color_mode = ColorMode.ONOFF
@@ -17,7 +25,6 @@ class NavienLight(LightEntity):
     def __init__(self, gateway, device, entry_id):
         self.gateway = gateway
         self._device = device
-        # Unique ID: navien_light_1_ENTRYID (절대 안 겹침)
         self._attr_unique_id = f"{device.key.unique_id}_{entry_id}"
         self._attr_name = f"Light {device.key.index}"
 
@@ -30,6 +37,7 @@ class NavienLight(LightEntity):
             )
         )
 
+    @callback
     def _update_state(self, state):
         self._device = state
         self._attr_is_on = state.state
