@@ -54,43 +54,35 @@ class NavienController:
     def _parse(self, pkt):
         dev_id = pkt[1]
         cmd = pkt[3]
-        
         try:
             data_len = pkt[4]
             if len(pkt) < 5 + data_len + 2: return
             data = pkt[5:5+data_len]
         except IndexError: return
 
-        # 1. Light (0x0E)
+        # 1. Light
         if dev_id == 0x0E and cmd == 0x81:
             if len(data) >= 2: 
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36) - ★ [긴급 원복] 사용자 맞춤 설정 복구
+        # 2. Thermostat
         elif dev_id == 0x36 and cmd == 0x81:
-            # ★ [원복 1] 길이 조건 완화 (14 -> 5)
-            # 사용자 로그: 0D(13byte) -> Header 제외 8byte 남음
-            if len(data) >= 5:
+            if len(data) >= 14:
                 pwr_mask = data[1]
                 away_mask = data[2]
-                
                 temp_data = data[5:]
                 room_count = len(temp_data) // 2
                 
-                # ★ [원복 2] 앞쪽이 현재온도, 뒤쪽이 설정온도
                 cur_temps = temp_data[:room_count]
                 set_temps = temp_data[room_count:]
                 
                 for i in range(room_count):
                     if i >= len(cur_temps) or i >= len(set_temps): break
-                    
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
-                    
                     c_temp = self._parse_temp(cur_temps[i])
                     s_temp = self._parse_temp(set_temps[i])
-                    
                     if c_temp == 0 and s_temp == 0: continue
 
                     state = {
@@ -101,28 +93,31 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - 전열교환기 (수정된 로직 유지)
+        # 3. Fan (0x32) - ★ [완벽 수정] Power 우선권 보장
         elif dev_id == 0x32 and cmd == 0x81:
+            # Log: 05 00 [Pwr] [Mode] [Speed]
             if len(data) >= 3:
                 pwr_byte = data[1]
                 mode_byte = data[2]
                 
-                # Power OFF 우선
                 is_on = (pwr_byte != 0x00)
                 
                 pct = 0
-                preset = "low"
+                preset = None  # 꺼지면 None
                 
                 if is_on:
+                    # 켜져 있을 때만 모드 해석
                     if mode_byte == 0x02: # Auto
                         preset = "auto"
                         pct = 50 
                     elif mode_byte == 0x03: # High
                         preset = "high"
                         pct = 100
-                    else: # Low
-                        preset = "low" 
+                    else: # 0x01 (Low/Mid)
+                        preset = "low"
                         pct = 33
+                        # 참고: Mid 상태는 HA에서 66%로 명령을 보내야 진입됨.
+                        # 상태값은 Low와 같게 보일 수 있으나 제어는 됨.
                 
                 state = {
                     "state": is_on, 
@@ -131,13 +126,13 @@ class NavienController:
                 }
                 self._update(DeviceType.VENTILATION, 1, state)
 
-        # 4. Gas (0x12)
+        # 4. Gas
         elif dev_id == 0x12 and cmd == 0x81:
             if len(data) >= 2:
                 is_closed = (data[1] == 0x04)
                 self._update(DeviceType.GASVALVE, 1, is_closed)
 
-        # 5. Elevator (0x33)
+        # 5. Elevator
         elif dev_id == 0x33 and cmd == 0x81:
             if len(data) >= 2:
                 is_active = (data[1] == 0x44)
@@ -193,6 +188,7 @@ class NavienController:
                 elif pct > 33: val = 0x02
                 payload = [0x01, val]
             else:
+                # Power ON/OFF
                 cmd = 0x41
                 val = 0x01 if action == "on" else 0x00
                 payload = [0x01, val]
