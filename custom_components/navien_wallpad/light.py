@@ -1,8 +1,9 @@
 from homeassistant.components.light import LightEntity, ColorMode
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.const import Platform  # ★ 필수
 from .const import DOMAIN
 
-# ★ [수정됨] 조명 이름 매핑
+# ★ 이름 설정 (여기서 수정하세요)
 NAME_MAP = {
     1: "거실등1",
     2: "거실등2",
@@ -14,7 +15,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     
     @async_dispatcher_connect(hass, f"{DOMAIN}_new_device")
     def add_light(dev):
-        if dev.platform == "light":
+        # ★ [수정됨] 문자열 "light"가 아니라 상수 Platform.LIGHT 사용
+        if dev.platform == Platform.LIGHT:
             async_add_entities([NavienLight(gateway, dev)])
 
 class NavienLight(LightEntity):
@@ -24,10 +26,9 @@ class NavienLight(LightEntity):
     def __init__(self, gateway, device):
         self.gateway = gateway
         self._device = device
-        # 고유 ID는 변하지 않게 유지
         self._attr_unique_id = device.key.unique_id
         
-        # ★ [수정됨] 매핑된 이름이 있으면 사용, 없으면 기본값(Light N)
+        # 이름 매핑 적용
         idx = device.key.index
         self._attr_name = NAME_MAP.get(idx, f"Light {idx}")
 
