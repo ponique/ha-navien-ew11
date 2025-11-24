@@ -32,8 +32,6 @@ class NavienFan(FanEntity):
         self._device = device
         self._attr_unique_id = device.key.unique_id
         self._attr_name = "전열교환기"
-        # ★ [추가] 마지막 사용 프리셋을 저장하여 UX 개선
-        self._last_preset = "low" 
 
     async def async_added_to_hass(self):
         self.async_on_remove(
@@ -50,9 +48,6 @@ class NavienFan(FanEntity):
         if self._attr_is_on:
             self._attr_percentage = state.state["percentage"]
             self._attr_preset_mode = state.state["preset_mode"]
-            # ★ [UX 개선] 켜져있을 때만 마지막 프리셋 업데이트
-            if self._attr_preset_mode is not None:
-                 self._last_preset = self._attr_preset_mode
         else:
             self._attr_percentage = 0
             self._attr_preset_mode = None
@@ -60,37 +55,44 @@ class NavienFan(FanEntity):
         self.async_write_ha_state()
 
     async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
+        # 켜기 버튼 (토글)만 눌렀을 경우 Auto 모드로 유도
+        if not preset_mode and not percentage:
+            await self.async_set_preset_mode("auto")
+            return
+            
         if preset_mode: 
             await self.async_set_preset_mode(preset_mode)
         elif percentage: 
             await self.async_set_percentage(percentage)
-        else: 
-            # ★ [UX 개선] 단순 ON 토글 시, 마지막 사용 프리셋으로 켜기 시도
-            # (last_preset이 None이면 Low로 기본값 사용)
-            target_preset = self._last_preset if self._last_preset else "low"
-            await self.async_set_preset_mode(target_preset)
     
     async def async_turn_off(self, **kwargs):
+        # OFF 명령 전송 후, UI를 OFF로 강제 업데이트 (바운스 방지)
         await self.gateway.send(self._device.key, "off")
+        
+        # Optimistic Update
+        self._attr_is_on = False
+        self._attr_percentage = 0
+        self._attr_preset_mode = None
+        self.async_write_ha_state()
     
     async def async_set_percentage(self, percentage):
         if percentage == 0:
             await self.async_turn_off()
             return
         
-        # ★ [핵심] 딜레이 적용
+        # 1. Power ON + 딜레이
         if not self.is_on:
             await self.gateway.send(self._device.key, "on")
-            await asyncio.sleep(0.6) # ★ 0.6초 딜레이 (최적 안정 값)
+            await asyncio.sleep(1.0) # 1.0초 딜레이 (안정성 확보)
 
+        # 2. 속도 설정
         await self.gateway.send(self._device.key, "set_speed", pct=percentage)
         
     async def async_set_preset_mode(self, preset_mode):
-        
-        # ★ [핵심] 딜레이 적용
+        # 1. Power ON + 딜레이
         if not self.is_on:
             await self.gateway.send(self._device.key, "on")
-            await asyncio.sleep(0.6) # ★ 0.6초 딜레이
+            await asyncio.sleep(1.0)
 
         pct = 33
         if preset_mode == "auto": pct = 50
