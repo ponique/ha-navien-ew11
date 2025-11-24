@@ -1,8 +1,10 @@
 from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature
+from homeassistant.components.climate.const import HVACMode
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.const import Platform  # ★ 필수
 from .const import DOMAIN
 
-# ★ [수정됨] 난방 이름 매핑
+# ★ 이름 설정 (여기서 수정하세요)
 NAME_MAP = {
     1: "거실 난방",
     2: "안방 난방",
@@ -14,11 +16,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
     gateway = hass.data[DOMAIN][entry.entry_id]
     @async_dispatcher_connect(hass, f"{DOMAIN}_new_device")
     def add_device(dev):
-        if dev.platform == "climate":
+        # ★ [수정됨] 상수 사용
+        if dev.platform == Platform.CLIMATE:
             async_add_entities([NavienClimate(gateway, dev)])
 
 class NavienClimate(ClimateEntity):
-    _attr_hvac_modes = ["off", "heat"]
+    _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
     _attr_preset_modes = ["none", "away"]
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE | ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
     _attr_temperature_unit = "°C"
@@ -30,7 +33,7 @@ class NavienClimate(ClimateEntity):
         self._device = device
         self._attr_unique_id = device.key.unique_id
         
-        # ★ [수정됨] 매핑된 이름 적용
+        # 이름 매핑 적용
         idx = device.key.index
         self._attr_name = NAME_MAP.get(idx, f"Heating {idx}")
 
