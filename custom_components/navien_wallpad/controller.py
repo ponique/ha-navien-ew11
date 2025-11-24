@@ -67,19 +67,27 @@ class NavienController:
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36)
+        # 2. Thermostat (0x36) - ★ [유지] 현재 로직이 맞다고 하셨으므로 그대로 둠
         elif dev_id == 0x36 and cmd == 0x81:
-            if len(data) >= 5:
+            # Log: 0D 00 01 0E 00 00 [Cur...] [Set...]
+            if len(data) >= 14:
                 pwr_mask = data[1]
                 away_mask = data[2]
                 temp_data = data[5:]
                 room_count = len(temp_data) // 2
                 
+                # 앞쪽이 현재온도(Current), 뒤쪽이 설정온도(Set)
+                cur_temps = temp_data[:room_count]
+                set_temps = temp_data[room_count:]
+                
                 for i in range(room_count):
+                    if i >= len(cur_temps) or i >= len(set_temps): break
+                    
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
-                    s_temp = self._parse_temp(temp_data[i*2])
-                    c_temp = self._parse_temp(temp_data[i*2+1])
+                    
+                    c_temp = self._parse_temp(cur_temps[i])
+                    s_temp = self._parse_temp(set_temps[i])
                     
                     if c_temp == 0 and s_temp == 0: continue
 
@@ -91,26 +99,29 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - ★ [수정됨] 프리셋-% 동기화 강화
+        # 3. Fan (0x32) - ★ [수정] 전원 OFF 우선 처리 및 모드 파싱
         elif dev_id == 0x32 and cmd == 0x81:
+            # Log: 05 00 [Pwr] [Mode] [Speed]
             if len(data) >= 3:
-                is_on = data[1] != 0x00
-                mode = data[2] # 01:Low, 02:Med, 03:High
+                pwr_byte = data[1]
+                mode_byte = data[2]
+                
+                # Power가 00이면 무조건 OFF
+                is_on = (pwr_byte != 0x00)
                 
                 pct = 0
                 preset = "low"
                 
                 if is_on:
-                    # 켜져있다면 무조건 값이 있어야 함 (0% 방지)
-                    if mode == 0x03: 
-                        pct = 100
+                    if mode_byte == 0x02: # Auto
+                        preset = "auto"
+                        pct = 50 # 표기용 중간값
+                    elif mode_byte == 0x03: # High
                         preset = "high"
-                    elif mode == 0x02: 
-                        pct = 66
-                        preset = "medium"
-                    else: # 0x01 or unknown
+                        pct = 100
+                    else: # 0x01 = Low/Mid
+                        preset = "low" 
                         pct = 33
-                        preset = "low"
                 
                 state = {
                     "state": is_on, 
@@ -176,13 +187,14 @@ class NavienController:
             if action == "set_speed":
                 cmd = 0x42
                 pct = kwargs['pct']
-                # ★ 퍼센트를 단계로 변환 (스냅핑)
-                val = 0x01 # 기본 Low
-                if pct > 67: val = 0x03  # High
-                elif pct > 34: val = 0x02 # Medium
+                val = 0x01
+                if pct > 66: val = 0x03
+                elif pct > 33: val = 0x02
                 payload = [0x01, val]
             else:
                 cmd = 0x41
+                # ★ [수정] OFF일 때는 무조건 00 전송
+                # ON일 때는 01 (Auto) 전송
                 val = 0x01 if action == "on" else 0x00
                 payload = [0x01, val]
 
