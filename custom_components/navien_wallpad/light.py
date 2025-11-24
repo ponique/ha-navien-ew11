@@ -1,9 +1,10 @@
+from homeassistant.core import callback
 from homeassistant.components.light import LightEntity, ColorMode
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.const import Platform  # ★ 필수
+from homeassistant.const import Platform
 from .const import DOMAIN
 
-# ★ 이름 설정 (여기서 수정하세요)
+# ★ 이름 고정
 NAME_MAP = {
     1: "거실등1",
     2: "거실등2",
@@ -13,11 +14,15 @@ NAME_MAP = {
 async def async_setup_entry(hass, entry, async_add_entities):
     gateway = hass.data[DOMAIN][entry.entry_id]
     
-    @async_dispatcher_connect(hass, f"{DOMAIN}_new_device")
+    @callback
     def add_light(dev):
-        # ★ [수정됨] 문자열 "light"가 아니라 상수 Platform.LIGHT 사용
         if dev.platform == Platform.LIGHT:
             async_add_entities([NavienLight(gateway, dev)])
+
+    # ★ 일반 함수 호출로 변경 (에러 해결됨)
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, f"{DOMAIN}_new_device", add_light)
+    )
 
 class NavienLight(LightEntity):
     _attr_color_mode = ColorMode.ONOFF
@@ -28,7 +33,7 @@ class NavienLight(LightEntity):
         self._device = device
         self._attr_unique_id = device.key.unique_id
         
-        # 이름 매핑 적용
+        # 이름 적용
         idx = device.key.index
         self._attr_name = NAME_MAP.get(idx, f"Light {idx}")
 
@@ -41,6 +46,7 @@ class NavienLight(LightEntity):
             )
         )
 
+    @callback
     def _update_state(self, state):
         self._device = state
         self._attr_is_on = state.state
