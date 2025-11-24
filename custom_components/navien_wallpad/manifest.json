@@ -1,0 +1,10 @@
+{
+  "domain": "navien_wallpad",
+  "name": "Navien Wallpad",
+  "codeowners": ["@ponique"],
+  "config_flow": true,
+  "documentation": "https://github.com/ponique/ha-navien-ew11",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "1.0.0"
+}
