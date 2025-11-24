@@ -46,11 +46,8 @@ class NavienController:
         if (add & 0xFF) != pkt[-1]: return False
         return True
 
-    # ★ [추가됨] 0.5도 단위 파싱 함수
     def _parse_temp(self, raw_val):
-        # 0x80(128) 비트가 있으면 0.5도 추가
-        # 예: 0x17(23) -> 23.0
-        # 예: 0x97(151) -> 23 + 0.5 = 23.5
+        # 0.5도 단위 파싱 (0x80 비트 체크)
         temp = float(raw_val & 0x7F)
         if raw_val & 0x80:
             temp += 0.5
@@ -72,28 +69,29 @@ class NavienController:
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36) - ★ 0.5도 로직 적용
+        # 2. Thermostat (0x36) - ★ [완벽 수정] 데이터 구조: [Set][Cur] 반복
         elif dev_id == 0x36 and cmd == 0x81:
+            # Log: 0D 00 01 0E 00 00 [Set1][Cur1] [Set2][Cur2] ...
             if len(data) >= 5:
                 pwr_mask = data[1]
                 away_mask = data[2]
                 
+                # 온도 데이터 시작 (인덱스 5부터)
                 temp_data = data[5:]
-                room_count = len(temp_data) // 2
                 
-                # [설정온도] -> [현재온도] 순서 (지난번 확인된 내용)
-                set_temps = temp_data[:room_count]
-                cur_temps = temp_data[room_count:]
+                # 방 1개당 2바이트(Set, Cur) 사용하므로 / 2
+                room_count = len(temp_data) // 2
                 
                 for i in range(room_count):
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
                     
-                    if i >= len(cur_temps) or i >= len(set_temps): break
-                    
-                    # ★ [수정] 단순 int 변환 대신 _parse_temp 사용
-                    c_temp = self._parse_temp(cur_temps[i])
-                    s_temp = self._parse_temp(set_temps[i])
+                    # ★ [수정됨] 짝지어 읽기
+                    # 짝수 인덱스: 설정온도 (Set)
+                    # 홀수 인덱스: 현재온도 (Cur)
+                    # 로그 분석 결과: 18(24도, Set) 17(23도, Cur) 순서임
+                    s_temp = self._parse_temp(temp_data[i*2])
+                    c_temp = self._parse_temp(temp_data[i*2+1])
                     
                     if c_temp == 0 and s_temp == 0: continue
 
@@ -153,6 +151,7 @@ class NavienController:
             DeviceType.GASVALVE: Platform.SWITCH,
             DeviceType.ELEVATOR: Platform.SWITCH
         }.get(dtype)
+        
         if plat:
             self.gateway.update_device(DeviceState(key, plat, state))
 
@@ -174,13 +173,10 @@ class NavienController:
                 val = 0x01 if kwargs['mode'] == HVACMode.HEAT else 0x00
                 payload = [0x01, val]
             elif action == "temp":
-                # ★ [수정] 온도 설정 시에도 0.5도 단위 반영
-                # 예: 23.5 -> 23 | 128 = 151 (0x97)
                 cmd = 0x44
                 target = float(kwargs['temp'])
                 int_part = int(target)
                 val = int_part
-                # 소수점이 0.5 이상이면 128(0x80) 더하기
                 if (target - int_part) >= 0.5:
                     val |= 0x80
                 payload = [0x01, val]
