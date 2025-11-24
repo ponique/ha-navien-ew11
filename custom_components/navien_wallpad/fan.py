@@ -1,15 +1,20 @@
+from homeassistant.core import callback
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.const import Platform  # ★ 필수
+from homeassistant.const import Platform
 from .const import DOMAIN
 
 async def async_setup_entry(hass, entry, async_add_entities):
     gateway = hass.data[DOMAIN][entry.entry_id]
-    @async_dispatcher_connect(hass, f"{DOMAIN}_new_device")
+    
+    @callback
     def add_device(dev):
-        # ★ [수정됨] 상수 사용
         if dev.platform == Platform.FAN:
             async_add_entities([NavienFan(gateway, dev)])
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, f"{DOMAIN}_new_device", add_device)
+    )
 
 class NavienFan(FanEntity):
     _attr_supported_features = FanEntityFeature.SET_SPEED | FanEntityFeature.TURN_ON | FanEntityFeature.TURN_OFF | FanEntityFeature.PRESET_MODE
@@ -22,8 +27,11 @@ class NavienFan(FanEntity):
         self._attr_name = "전열교환기" # 이름 고정
 
     async def async_added_to_hass(self):
-        self.async_on_remove(async_dispatcher_connect(self.hass, f"{DOMAIN}_update_{self._device.key.unique_id}", self._update))
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, f"{DOMAIN}_update_{self._device.key.unique_id}", self._update)
+        )
 
+    @callback
     def _update(self, state):
         self._device = state
         self._attr_is_on = state.state["state"]
