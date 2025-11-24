@@ -61,40 +61,32 @@ class NavienController:
             data = pkt[5:5+data_len]
         except IndexError: return
 
-        # 1. Light
+        # 1. Light (0x0E)
         if dev_id == 0x0E and cmd == 0x81:
             if len(data) >= 2: 
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36) - ★ [복구됨] 짝지어 읽기 (Interleaved)
+        # 2. Thermostat (0x36)
         elif dev_id == 0x36 and cmd == 0x81:
             if len(data) >= 5:
                 pwr_mask = data[1]
                 away_mask = data[2]
-                
                 temp_data = data[5:]
-                # 1개 방당 2바이트(Set, Cur) 사용
                 room_count = len(temp_data) // 2
                 
+                # [현재][설정] 순서
+                cur_temps = temp_data[:room_count]
+                set_temps = temp_data[room_count:]
+                
                 for i in range(room_count):
+                    if i >= len(cur_temps) or i >= len(set_temps): break
+                    
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
                     
-                    # ★ [핵심] 사용자님 댁은 [값1][값2]가 한 방의 데이터임
-                    # 아까 잘 되던 순서: (앞: 설정?, 뒤: 현재?)
-                    # 사용자 피드백: "Heating 3 - 설정24(18)인데 21(15)로 뜸" -> 앞을 읽어서 뒤로 매핑함.
-                    # 즉, 들어오는 순서는 [Set, Cur] or [Cur, Set] 인데
-                    # 일단 아까 "잘 맞다"고 하셨던 로직(짝지어 읽기)으로 복구합니다.
-                    # (보통 앞이 설정, 뒤가 현재인 경우가 많음. 반대면 Swap만 하면 됨)
-                    
-                    # Case A: temp_data[i*2] = Set, temp_data[i*2+1] = Cur
-                    s_temp = self._parse_temp(temp_data[i*2])
-                    c_temp = self._parse_temp(temp_data[i*2+1])
-                    
-                    # 만약 반대라면 아래 주석 해제하세요
-                    # c_temp = self._parse_temp(temp_data[i*2])
-                    # s_temp = self._parse_temp(temp_data[i*2+1])
+                    c_temp = self._parse_temp(cur_temps[i])
+                    s_temp = self._parse_temp(set_temps[i])
                     
                     if c_temp == 0 and s_temp == 0: continue
 
@@ -106,26 +98,30 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - [유지] 전열교환기 개선 로직
+        # 3. Fan (0x32) - ★ [완벽 수정] OFF시 데이터 초기화
         elif dev_id == 0x32 and cmd == 0x81:
             if len(data) >= 3:
                 pwr_byte = data[1]
                 mode_byte = data[2]
-                speed_byte = data[3] if len(data) > 3 else 0
                 
+                # 1. Power Check
                 is_on = (pwr_byte != 0x00)
+                
+                # 기본값: 꺼짐 상태
                 pct = 0
-                preset = "low"
+                preset = None # 꺼지면 None이어야 함 (HA UI 반영용)
                 
                 if is_on:
-                    if mode_byte == 0x02 or speed_byte == 0x04: 
+                    # 켜져 있을 때만 모드 분석
+                    # Mode 02: Auto, 03: High, 01: Low/Mid
+                    if mode_byte == 0x02:
                         preset = "auto"
-                        pct = 50 
-                    elif mode_byte == 0x03: 
+                        pct = 50
+                    elif mode_byte == 0x03:
                         preset = "high"
                         pct = 100
-                    else: 
-                        preset = "low" 
+                    else:
+                        preset = "low"
                         pct = 33
                 
                 state = {
@@ -135,13 +131,13 @@ class NavienController:
                 }
                 self._update(DeviceType.VENTILATION, 1, state)
 
-        # 4. Gas
+        # 4. Gas (0x12)
         elif dev_id == 0x12 and cmd == 0x81:
             if len(data) >= 2:
                 is_closed = (data[1] == 0x04)
                 self._update(DeviceType.GASVALVE, 1, is_closed)
 
-        # 5. Elevator
+        # 5. Elevator (0x33)
         elif dev_id == 0x33 and cmd == 0x81:
             if len(data) >= 2:
                 is_active = (data[1] == 0x44)
@@ -195,6 +191,7 @@ class NavienController:
                 val = 0x01
                 if pct > 66: val = 0x03
                 elif pct > 33: val = 0x02
+                elif pct == 50: val = 0x04 # Auto Cmd
                 payload = [0x01, val]
             else:
                 cmd = 0x41
