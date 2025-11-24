@@ -17,22 +17,31 @@ async def async_setup_entry(hass, entry, async_add_entities):
     )
 
 class NavienFan(FanEntity):
-    _attr_supported_features = FanEntityFeature.SET_SPEED | FanEntityFeature.TURN_ON | FanEntityFeature.TURN_OFF | FanEntityFeature.PRESET_MODE
-    _attr_preset_modes = ["low", "medium", "high"]
+    _attr_supported_features = (
+        FanEntityFeature.SET_SPEED 
+        | FanEntityFeature.TURN_ON 
+        | FanEntityFeature.TURN_OFF 
+        | FanEntityFeature.PRESET_MODE
+    )
+    # Auto, Low, Medium, High 순서
+    _attr_preset_modes = ["auto", "low", "medium", "high"]
+    _attr_speed_count = 3
 
     def __init__(self, gateway, device):
         self.gateway = gateway
         self._device = device
         self._attr_unique_id = device.key.unique_id
-        self._attr_name = "전열교환기" # 이름 고정
+        self._attr_name = "전열교환기"
 
     async def async_added_to_hass(self):
         self.async_on_remove(
-            async_dispatcher_connect(self.hass, f"{DOMAIN}_update_{self._device.key.unique_id}", self._update)
+            async_dispatcher_connect(
+                self.hass, f"{DOMAIN}_update_{self._device.key.unique_id}", self._update_state
+            )
         )
 
     @callback
-    def _update(self, state):
+    def _update_state(self, state):
         self._device = state
         self._attr_is_on = state.state["state"]
         self._attr_percentage = state.state["percentage"]
@@ -42,16 +51,23 @@ class NavienFan(FanEntity):
     async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
         if preset_mode: await self.async_set_preset_mode(preset_mode)
         elif percentage: await self.async_set_percentage(percentage)
-        else: await self.gateway.send(self._device.key, "on")
+        else: await self.gateway.send(self._device.key, "on") # 기본 켜기 = Auto
     
     async def async_turn_off(self, **kwargs):
+        # ★ 다른 조건 없이 무조건 OFF 명령 전송
         await self.gateway.send(self._device.key, "off")
     
     async def async_set_percentage(self, percentage):
-        await self.gateway.send(self._device.key, "set_speed", pct=percentage)
+        if percentage == 0:
+            await self.async_turn_off()
+        else:
+            await self.gateway.send(self._device.key, "set_speed", pct=percentage)
         
     async def async_set_preset_mode(self, preset_mode):
-        pct = 33
-        if preset_mode == "medium": pct = 66
-        elif preset_mode == "high": pct = 100
-        await self.gateway.send(self._device.key, "set_speed", pct=pct)
+        if preset_mode == "auto":
+            await self.gateway.send(self._device.key, "on") # Auto Command
+        else:
+            pct = 33
+            if preset_mode == "medium": pct = 66
+            elif preset_mode == "high": pct = 100
+            await self.gateway.send(self._device.key, "set_speed", pct=pct)
