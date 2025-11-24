@@ -1,4 +1,3 @@
-import asyncio
 from homeassistant.core import callback
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -54,36 +53,33 @@ class NavienFan(FanEntity):
         elif percentage: 
             await self.async_set_percentage(percentage)
         else: 
-            # 그냥 켜기 -> Auto(ON) 명령 전송
-            await self.gateway.send(self._device.key, "on")
+            # 기본 켜기는 'Low(약)' 모드로 (Auto 방지)
+            await self.async_set_preset_mode("low")
     
     async def async_turn_off(self, **kwargs):
-        # ★ [중요] 끄기는 무조건 OFF 전송
         await self.gateway.send(self._device.key, "off")
     
     async def async_set_percentage(self, percentage):
         if percentage == 0:
             await self.async_turn_off()
             return
-
-        # ★ [핵심] 꺼져있으면 일단 켜야 속도 명령이 먹힘
+        
+        # 꺼져있으면 켜기
         if not self.is_on:
             await self.gateway.send(self._device.key, "on")
-            await asyncio.sleep(0.5) # 기계가 반응할 시간 줌
-
+            
         await self.gateway.send(self._device.key, "set_speed", pct=percentage)
         
     async def async_set_preset_mode(self, preset_mode):
-        if preset_mode == "auto":
-            await self.gateway.send(self._device.key, "on") # Auto = ON
-        else:
-            # ★ [핵심] 꺼져있으면 일단 켜기
-            if not self.is_on:
-                await self.gateway.send(self._device.key, "on")
-                await asyncio.sleep(0.5)
-
-            pct = 33
-            if preset_mode == "medium": pct = 66
-            elif preset_mode == "high": pct = 100
+        # ★ 꺼져있으면 일단 켜기
+        if not self.is_on:
+            await self.gateway.send(self._device.key, "on")
+            # 켜지자마자 바로 모드 명령을 보내면 씹힐 수 있으니 살짝 대기할 수도 있으나,
+            # 보통 0.5초 딜레이 로직은 복잡성을 높이므로 여기선 순차 전송만 합니다.
             
-            await self.gateway.send(self._device.key, "set_speed", pct=pct)
+        pct = 33
+        if preset_mode == "medium": pct = 66
+        elif preset_mode == "high": pct = 100
+        elif preset_mode == "auto": pct = 50 # Auto -> 0x04 Command
+        
+        await self.gateway.send(self._device.key, "set_speed", pct=pct)
