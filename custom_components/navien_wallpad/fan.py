@@ -1,3 +1,4 @@
+import asyncio
 from homeassistant.core import callback
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -23,7 +24,6 @@ class NavienFan(FanEntity):
         | FanEntityFeature.TURN_OFF 
         | FanEntityFeature.PRESET_MODE
     )
-    # 프리셋 목록
     _attr_preset_modes = ["auto", "low", "medium", "high"]
     _attr_speed_count = 3
 
@@ -54,8 +54,15 @@ class NavienFan(FanEntity):
         elif percentage: 
             await self.async_set_percentage(percentage)
         else: 
-            # ★ [수정됨] 그냥 켜면 'Low(약)' 모드로 시작 (Auto 방지)
-            # 만약 Medium으로 켜고 싶으시면 "medium"으로 바꾸시면 됩니다.
+            # 그냥 켜기 누르면? -> 일단 켭니다(Auto). 그리고 사용자가 원했던 'Low'로 전환 시도
+            # 만약 'Auto'가 싫으시다면 아래 로직을 사용합니다.
+            
+            # 1. 일단 켠다 (Auto로 켜짐)
+            await self.gateway.send(self._device.key, "on")
+            
+            # 2. 잠시 대기 후 'Low'로 변경 (2단 콤보)
+            # (취향에 따라 이 부분을 주석 처리하면 그냥 Auto로 켜집니다)
+            await asyncio.sleep(0.5)
             await self.async_set_preset_mode("low")
     
     async def async_turn_off(self, **kwargs):
@@ -64,17 +71,26 @@ class NavienFan(FanEntity):
     async def async_set_percentage(self, percentage):
         if percentage == 0:
             await self.async_turn_off()
-        else:
-            await self.gateway.send(self._device.key, "set_speed", pct=percentage)
+            return
+
+        # ★ [핵심] 꺼져있으면 일단 켜야 함
+        if not self.is_on:
+            await self.gateway.send(self._device.key, "on")
+            await asyncio.sleep(0.5) # 기기가 켜질 시간 확보
+
+        await self.gateway.send(self._device.key, "set_speed", pct=percentage)
         
     async def async_set_preset_mode(self, preset_mode):
         if preset_mode == "auto":
-            await self.gateway.send(self._device.key, "on") # Auto Command (41 01 01)
+            await self.gateway.send(self._device.key, "on")
         else:
+            # ★ [핵심] 꺼져있으면 일단 켜야 함
+            if not self.is_on:
+                await self.gateway.send(self._device.key, "on")
+                await asyncio.sleep(0.5) # 기기가 켜질 시간 확보
+
             pct = 33
             if preset_mode == "medium": pct = 66
             elif preset_mode == "high": pct = 100
             
-            # 해당 풍량 명령 전송 (42 01 XX)
-            # 보통 꺼져있을 때 풍량 명령을 보내면 켜지면서 해당 풍량이 됩니다.
             await self.gateway.send(self._device.key, "set_speed", pct=pct)
