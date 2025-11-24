@@ -6,7 +6,6 @@ from .const import DOMAIN
 
 async def async_setup_entry(hass, entry, async_add_entities):
     gateway = hass.data[DOMAIN][entry.entry_id]
-    
     @callback
     def add_device(dev):
         if dev.platform == Platform.FAN:
@@ -44,24 +43,20 @@ class NavienFan(FanEntity):
         self._device = state
         self._attr_is_on = state.state["state"]
         
-        # 켜져있을 때만 값 반영, 꺼져있으면 None/0 처리
+        # ★ [핵심] 켜져있을 때만 프리셋/속도 표시
         if self._attr_is_on:
             self._attr_percentage = state.state["percentage"]
             self._attr_preset_mode = state.state["preset_mode"]
         else:
             self._attr_percentage = 0
-            self._attr_preset_mode = None
+            self._attr_preset_mode = None # 꺼짐 표시
             
         self.async_write_ha_state()
 
     async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
-        if preset_mode: 
-            await self.async_set_preset_mode(preset_mode)
-        elif percentage: 
-            await self.async_set_percentage(percentage)
-        else: 
-            # ★ 그냥 켜기 -> Auto 모드로 켜기 시도 (가장 확실함)
-            await self.async_set_preset_mode("auto")
+        if preset_mode: await self.async_set_preset_mode(preset_mode)
+        elif percentage: await self.async_set_percentage(percentage)
+        else: await self.gateway.send(self._device.key, "on")
     
     async def async_turn_off(self, **kwargs):
         await self.gateway.send(self._device.key, "off")
@@ -70,19 +65,20 @@ class NavienFan(FanEntity):
         if percentage == 0:
             await self.async_turn_off()
         else:
-            # 꺼져있으면 켜기 (Auto) 후 속도 변경
+            # 꺼져있으면 켜기
             if not self.is_on:
                 await self.gateway.send(self._device.key, "on")
-            
+                
             await self.gateway.send(self._device.key, "set_speed", pct=percentage)
         
     async def async_set_preset_mode(self, preset_mode):
+        # 꺼져있으면 켜기
+        if not self.is_on:
+            await self.gateway.send(self._device.key, "on")
+
         pct = 33
-        if preset_mode == "auto": 
-            pct = 50
-        elif preset_mode == "medium": 
-            pct = 66
-        elif preset_mode == "high": 
-            pct = 100
+        if preset_mode == "auto": pct = 50
+        elif preset_mode == "medium": pct = 66
+        elif preset_mode == "high": pct = 100
         
         await self.gateway.send(self._device.key, "set_speed", pct=pct)
