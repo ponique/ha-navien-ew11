@@ -23,7 +23,7 @@ class NavienFan(FanEntity):
         | FanEntityFeature.TURN_OFF 
         | FanEntityFeature.PRESET_MODE
     )
-    # Auto, Low, Medium, High 순서
+    # 프리셋 목록
     _attr_preset_modes = ["auto", "low", "medium", "high"]
     _attr_speed_count = 3
 
@@ -49,12 +49,16 @@ class NavienFan(FanEntity):
         self.async_write_ha_state()
 
     async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
-        if preset_mode: await self.async_set_preset_mode(preset_mode)
-        elif percentage: await self.async_set_percentage(percentage)
-        else: await self.gateway.send(self._device.key, "on") # 기본 켜기 = Auto
+        if preset_mode: 
+            await self.async_set_preset_mode(preset_mode)
+        elif percentage: 
+            await self.async_set_percentage(percentage)
+        else: 
+            # ★ [수정됨] 그냥 켜면 'Low(약)' 모드로 시작 (Auto 방지)
+            # 만약 Medium으로 켜고 싶으시면 "medium"으로 바꾸시면 됩니다.
+            await self.async_set_preset_mode("low")
     
     async def async_turn_off(self, **kwargs):
-        # ★ 다른 조건 없이 무조건 OFF 명령 전송
         await self.gateway.send(self._device.key, "off")
     
     async def async_set_percentage(self, percentage):
@@ -65,9 +69,12 @@ class NavienFan(FanEntity):
         
     async def async_set_preset_mode(self, preset_mode):
         if preset_mode == "auto":
-            await self.gateway.send(self._device.key, "on") # Auto Command
+            await self.gateway.send(self._device.key, "on") # Auto Command (41 01 01)
         else:
             pct = 33
             if preset_mode == "medium": pct = 66
             elif preset_mode == "high": pct = 100
+            
+            # 해당 풍량 명령 전송 (42 01 XX)
+            # 보통 꺼져있을 때 풍량 명령을 보내면 켜지면서 해당 풍량이 됩니다.
             await self.gateway.send(self._device.key, "set_speed", pct=pct)
