@@ -67,22 +67,29 @@ class NavienController:
                 for i, val in enumerate(data[1:]):
                     self._update(DeviceType.LIGHT, i+1, val == 0x01)
 
-        # 2. Thermostat (0x36)
+        # 2. Thermostat (0x36) - ★ [수정됨] 길이 조건 완화
         elif dev_id == 0x36 and cmd == 0x81:
-            if len(data) >= 14:
+            # Log: 0D 00 01 0E 00 00 [Cur...] [Set...]
+            # Header 5 bytes + (RoomCount * 2) bytes
+            
+            # ★ [핵심 수정] 14가 아니라 5 이상이면 처리 (방 개수 자동 계산)
+            if len(data) >= 5:
                 pwr_mask = data[1]
                 away_mask = data[2]
+                
                 temp_data = data[5:]
                 room_count = len(temp_data) // 2
                 
+                # 앞쪽이 현재온도, 뒤쪽이 설정온도
                 cur_temps = temp_data[:room_count]
                 set_temps = temp_data[room_count:]
                 
                 for i in range(room_count):
+                    if i >= len(cur_temps) or i >= len(set_temps): break
+                    
                     is_on = bool(pwr_mask & (1 << i))
                     is_away = bool(away_mask & (1 << i))
                     
-                    if i >= len(cur_temps) or i >= len(set_temps): break
                     c_temp = self._parse_temp(cur_temps[i])
                     s_temp = self._parse_temp(set_temps[i])
                     
@@ -96,32 +103,25 @@ class NavienController:
                     }
                     self._update(DeviceType.THERMOSTAT, i+1, state)
 
-        # 3. Fan (0x32) - ★ [검증 완료] 최종 로직
+        # 3. Fan (0x32) - 전열교환기 로직 유지
         elif dev_id == 0x32 and cmd == 0x81:
-            # Log: 05 00 [Pwr] [Mode] [Speed]
             if len(data) >= 3:
                 pwr_byte = data[1]
                 mode_byte = data[2]
                 
-                # 1. Power Check (최우선)
                 is_on = (pwr_byte != 0x00)
-                
                 pct = 0
                 preset = "low"
                 
                 if is_on:
-                    # 2. Mode Check
-                    if mode_byte == 0x02: # Auto Mode
+                    if mode_byte == 0x02: # Auto
                         preset = "auto"
-                        pct = 50 # 가상 값 (UI 표시용)
-                    elif mode_byte == 0x03: # Turbo/High Mode
+                        pct = 50 
+                    elif mode_byte == 0x03: # High
                         preset = "high"
                         pct = 100
-                    else: 
-                        # Mode 0x01 (Manual) -> Assume Low for now
-                        # (사용자 로그에서 1단, 2단 구분이 모호하지만 
-                        #  보통 1단 상태로 많이 뜸. 제어는 정확히 됨)
-                        preset = "low"
+                    else: # Low/Mid
+                        preset = "low" 
                         pct = 33
                 
                 state = {
@@ -186,19 +186,14 @@ class NavienController:
 
         elif dtype == DeviceType.VENTILATION:
             if action == "set_speed":
-                cmd = 0x42 # Speed Control
+                cmd = 0x42
                 pct = kwargs['pct']
-                
-                # ★ [검증] 속도 매핑
-                val = 0x01 # Default Low
-                if pct == 100: val = 0x03 # High
-                elif pct == 66: val = 0x02 # Medium
-                elif pct == 50: val = 0x04 # Auto Command (Magic)
-                
+                val = 0x01
+                if pct > 66: val = 0x03
+                elif pct > 33: val = 0x02
                 payload = [0x01, val]
             else:
-                cmd = 0x41 # Power Control
-                # ★ [검증] 끄기는 00, 켜기는 01(Auto)
+                cmd = 0x41
                 val = 0x01 if action == "on" else 0x00
                 payload = [0x01, val]
 
