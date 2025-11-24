@@ -1,16 +1,21 @@
+from homeassistant.core import callback
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.const import Platform  # ★ 필수
+from homeassistant.const import Platform
 from .const import DOMAIN
 from .models import DeviceType
 
 async def async_setup_entry(hass, entry, async_add_entities):
     gateway = hass.data[DOMAIN][entry.entry_id]
-    @async_dispatcher_connect(hass, f"{DOMAIN}_new_device")
+    
+    @callback
     def add_device(dev):
-        # ★ [수정됨] 상수 사용
         if dev.platform == Platform.SWITCH:
             async_add_entities([NavienSwitch(gateway, dev)])
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, f"{DOMAIN}_new_device", add_device)
+    )
 
 class NavienSwitch(SwitchEntity):
     def __init__(self, gateway, device):
@@ -21,8 +26,11 @@ class NavienSwitch(SwitchEntity):
         self._attr_icon = "mdi:gas-cylinder" if device.key.device_type == DeviceType.GASVALVE else "mdi:elevator"
 
     async def async_added_to_hass(self):
-        self.async_on_remove(async_dispatcher_connect(self.hass, f"{DOMAIN}_update_{self._device.key.unique_id}", self._update))
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, f"{DOMAIN}_update_{self._device.key.unique_id}", self._update)
+        )
 
+    @callback
     def _update(self, state):
         self._device = state
         self._attr_is_on = state.state
