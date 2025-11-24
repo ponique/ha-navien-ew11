@@ -54,18 +54,11 @@ class NavienFan(FanEntity):
         elif percentage: 
             await self.async_set_percentage(percentage)
         else: 
-            # 그냥 켜기 누르면? -> 일단 켭니다(Auto). 그리고 사용자가 원했던 'Low'로 전환 시도
-            # 만약 'Auto'가 싫으시다면 아래 로직을 사용합니다.
-            
-            # 1. 일단 켠다 (Auto로 켜짐)
+            # 그냥 켜기 -> Auto(ON) 명령 전송
             await self.gateway.send(self._device.key, "on")
-            
-            # 2. 잠시 대기 후 'Low'로 변경 (2단 콤보)
-            # (취향에 따라 이 부분을 주석 처리하면 그냥 Auto로 켜집니다)
-            await asyncio.sleep(0.5)
-            await self.async_set_preset_mode("low")
     
     async def async_turn_off(self, **kwargs):
+        # ★ [중요] 끄기는 무조건 OFF 전송
         await self.gateway.send(self._device.key, "off")
     
     async def async_set_percentage(self, percentage):
@@ -73,21 +66,21 @@ class NavienFan(FanEntity):
             await self.async_turn_off()
             return
 
-        # ★ [핵심] 꺼져있으면 일단 켜야 함
+        # ★ [핵심] 꺼져있으면 일단 켜야 속도 명령이 먹힘
         if not self.is_on:
             await self.gateway.send(self._device.key, "on")
-            await asyncio.sleep(0.5) # 기기가 켜질 시간 확보
+            await asyncio.sleep(0.5) # 기계가 반응할 시간 줌
 
         await self.gateway.send(self._device.key, "set_speed", pct=percentage)
         
     async def async_set_preset_mode(self, preset_mode):
         if preset_mode == "auto":
-            await self.gateway.send(self._device.key, "on")
+            await self.gateway.send(self._device.key, "on") # Auto = ON
         else:
-            # ★ [핵심] 꺼져있으면 일단 켜야 함
+            # ★ [핵심] 꺼져있으면 일단 켜기
             if not self.is_on:
                 await self.gateway.send(self._device.key, "on")
-                await asyncio.sleep(0.5) # 기기가 켜질 시간 확보
+                await asyncio.sleep(0.5)
 
             pct = 33
             if preset_mode == "medium": pct = 66
