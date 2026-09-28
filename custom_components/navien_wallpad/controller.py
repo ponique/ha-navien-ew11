@@ -169,7 +169,8 @@ class NavienController:
         # 4. Gas (0x12)
         elif dev_id == 0x12 and cmd == 0x81:
             if len(data) >= 2:
-                is_closed = (data[1] == 0x04)
+                # 0x02 is confirmed closed; keep the legacy 0x04 variant.
+                is_closed = data[1] in (0x02, 0x04)
                 self._log_parse(pkt, frame_id, "KNOWN", DeviceType.GASVALVE, 1, is_closed)
                 self._update(DeviceType.GASVALVE, 1, is_closed)
             else:
