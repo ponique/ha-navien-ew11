@@ -7,6 +7,7 @@ PLATFORMS = [
     Platform.CLIMATE,
     Platform.FAN,
     Platform.SWITCH,
+    Platform.BUTTON,
 ]
 
 CONF_HOST = "host"

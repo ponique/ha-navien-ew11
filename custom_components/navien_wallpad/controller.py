@@ -170,7 +170,12 @@ class NavienController:
         elif dev_id == 0x12 and cmd == 0x81:
             if len(data) >= 2:
                 # 0x02 is confirmed closed; keep the legacy 0x04 variant.
-                is_closed = data[1] in (0x02, 0x04)
+                if data[1] in (0x02, 0x04):
+                    is_closed = True
+                elif data[1] == 0x01:
+                    is_closed = False
+                else:
+                    is_closed = None
                 self._log_parse(pkt, frame_id, "KNOWN", DeviceType.GASVALVE, 1, is_closed)
                 self._update(DeviceType.GASVALVE, 1, is_closed)
             else:
@@ -199,7 +204,7 @@ class NavienController:
             DeviceType.THERMOSTAT: Platform.CLIMATE,
             DeviceType.VENTILATION: Platform.FAN,
             DeviceType.GASVALVE: Platform.SWITCH,
-            DeviceType.ELEVATOR: Platform.SWITCH
+            DeviceType.ELEVATOR: Platform.BUTTON
         }.get(dtype)
         if plat:
             self.gateway.update_device(DeviceState(key, plat, state))
@@ -250,10 +255,14 @@ class NavienController:
                 payload = [0x01, 0x01] # Power ON
 
         elif dtype == DeviceType.GASVALVE:
+            if action != "off":
+                raise ValueError("Only gas closure is supported; opening is not verified")
             cmd = 0x41
             payload = [0x01, 0x00]
 
         elif dtype == DeviceType.ELEVATOR:
+            if action != "call":
+                raise ValueError("Elevator calls require the call action")
             cmd = 0x43
             payload = [0x01, 0x10]
 

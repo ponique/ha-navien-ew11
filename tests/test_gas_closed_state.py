@@ -13,6 +13,7 @@ class Platform:
     CLIMATE = "climate"
     FAN = "fan"
     SWITCH = "switch"
+    BUTTON = "button"
 
 
 class HVACMode(str, Enum):
@@ -34,7 +35,7 @@ def load_controller():
     )]
     exec(compile(tree, str(model_path), "exec"), package.__dict__)
     namespace = dict(package.__dict__, logging=logging, PACKET_PREFIX=0xF7,
-                     HVACMode=HVACMode)
+                     HVACMode=HVACMode, WIRE_LOGGER=logging.getLogger("offline_wire"), PACKET_LOGGER=logging.getLogger("offline_packet"), _debug_event=lambda *a, **k: None)
     path = ROOT / "custom_components/navien_wallpad/controller.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     tree.body = [node for node in tree.body
@@ -95,10 +96,11 @@ class GasClosedStateTests(unittest.TestCase):
         self.controller.feed(packet)
         self.assertEqual(self.states(), [])
 
-    def test_command_bytes_are_unchanged_and_match_observed_closure(self):
+    def test_close_bytes_match_observed_closure_and_open_is_rejected(self):
         # Generate bytes only; there is no transport or physical transmission.
         expected = bytes.fromhex("f71201410100a4f0")
-        self.assertEqual(self.controller.make_cmd(DeviceType.GASVALVE, 1, "on"), expected)
+        with self.assertRaises(ValueError):
+            self.controller.make_cmd(DeviceType.GASVALVE, 1, "on")
         self.assertEqual(self.controller.make_cmd(DeviceType.GASVALVE, 1, "off"), expected)
 
     def test_thermostat_temperature_and_away_mapping_unchanged(self):
