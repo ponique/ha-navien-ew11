@@ -40,19 +40,24 @@ class NavienClimate(ClimateEntity):
         
         idx = device.key.index
         self._attr_name = NAME_MAP.get(idx, f"Heating {idx}")
+        self._set_state_attributes()
 
     async def async_added_to_hass(self):
         self.async_on_remove(
             async_dispatcher_connect(self.hass, f"{DOMAIN}_update_{self._device.key.unique_id}", self._update)
         )
 
+    def _set_state_attributes(self):
+        state = self._device.state
+        self._attr_hvac_mode = state["hvac_mode"]
+        self._attr_preset_mode = state["preset_mode"]
+        self._attr_current_temperature = state["current_temp"]
+        self._attr_target_temperature = state["target_temp"]
+
     @callback
     def _update(self, state):
         self._device = state
-        self._attr_hvac_mode = state.state["hvac_mode"]
-        self._attr_preset_mode = state.state["preset_mode"]
-        self._attr_current_temperature = state.state["current_temp"]
-        self._attr_target_temperature = state.state["target_temp"]
+        self._set_state_attributes()
         self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode):
