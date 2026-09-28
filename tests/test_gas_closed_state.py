@@ -28,7 +28,7 @@ def load_controller():
     package.__dict__["Platform"] = Platform
     sys.modules[package.__name__] = package
     model_path = ROOT / "custom_components/navien_wallpad/models.py"
-    tree = ast.parse(model_path.read_text())
+    tree = ast.parse(model_path.read_text(encoding="utf-8"))
     tree.body = [node for node in tree.body if not (
         isinstance(node, ast.ImportFrom) and node.module == "homeassistant.const"
     )]
@@ -36,7 +36,7 @@ def load_controller():
     namespace = dict(package.__dict__, logging=logging, PACKET_PREFIX=0xF7,
                      HVACMode=HVACMode)
     path = ROOT / "custom_components/navien_wallpad/controller.py"
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     tree.body = [node for node in tree.body
                  if not isinstance(node, (ast.Import, ast.ImportFrom))]
     exec(compile(tree, str(path), "exec"), namespace)
