@@ -1,7 +1,8 @@
 import asyncio
+import logging
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from .transport import AsyncConnection
+from .transport import AsyncConnection, PACKET_LOGGER, _debug_event
 from .controller import NavienController
 from .const import DOMAIN
 
@@ -12,6 +13,7 @@ class NavienGateway:
         self.controller = NavienController(self)
         self.devices = {}
         self._reconnect_task = None
+        self._debug_tx_id = 0
 
     async def start(self):
         await self.conn.open()
@@ -42,5 +44,17 @@ class NavienGateway:
             async_dispatcher_send(self.hass, f"{DOMAIN}_update_{uid}", state)
 
     async def send(self, key, action, **kwargs):
+        self._debug_tx_id += 1
+        _debug_tx_id = self._debug_tx_id
+        if PACKET_LOGGER.isEnabledFor(logging.DEBUG):
+            _debug_event(PACKET_LOGGER, "TX_REQUEST", tx_id=_debug_tx_id,
+                         connection=self.conn._debug_connection_id,
+                         device_type=key.device_type.name, index=key.index, action=action,
+                         parameters={name: kwargs[name] for name in ("mode", "temp", "pct")
+                                     if name in kwargs})
         pkt = self.controller.make_cmd(key.device_type, key.index, action, **kwargs)
-        await self.conn.send(pkt)
+        if PACKET_LOGGER.isEnabledFor(logging.DEBUG):
+            _debug_event(PACKET_LOGGER, "TX_GENERATED", tx_id=_debug_tx_id,
+                         connection=self.conn._debug_connection_id, length=len(pkt),
+                         device=pkt[1], sub=pkt[2], command=pkt[3])
+        await self.conn.send(pkt, tx_id=_debug_tx_id)
