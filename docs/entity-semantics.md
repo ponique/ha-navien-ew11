@@ -13,7 +13,9 @@ preserved, but physical command success and direction selection remain unverifie
 No floor or arrival sensor is introduced from incomplete evidence.
 
 The climate constructor initializes received attributes before HA registration.
-Packet logging remains optional. Main is unchanged until deployment and review.
+Packet logging remains optional. These source changes are committed on local
+`main`; source branch state does not prove HA deployment. Verify deployed code
+and runtime behavior separately through HA-MCP before any deployment or control.
 
 Offline tests do not certify live HA compatibility. Known follow-ups include
 length-driven stream framing, gateway task cancellation, connection availability,
